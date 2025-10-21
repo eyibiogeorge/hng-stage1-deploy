@@ -1,11 +1,21 @@
-# Use official Nginx base image
-FROM nginx:latest
+# ===============================
+# Simple Nginx Static Site Dockerfile
+# ===============================
 
-# Copy your static web file into the Nginx default HTML directory
-COPY index.html /usr/share/nginx/html/index.html
+# Use a lightweight, stable Nginx version instead of :latest for predictability
+FROM nginx:1.25-alpine
 
-# Expose port 80 for web traffic
+# Set working directory for clarity (optional but clean)
+WORKDIR /usr/share/nginx/html
+
+# Remove default nginx page
+RUN rm -rf ./*
+
+# Copy your static files (HTML, CSS, JS, etc.) into container
+COPY . .
+
+# Expose port 80 for HTTP
 EXPOSE 80
 
-# Run Nginx in the foreground
+# Start Nginx in the foreground
 CMD ["nginx", "-g", "daemon off;"]

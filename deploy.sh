@@ -14,18 +14,16 @@ echo "============================================"
 
 # === 1. Collect User Inputs ===
 read -p "Enter GitHub Repository URL (e.g. https://github.com/username/repo.git): " GIT_URL
-#GIT_URL=${GIT_URL:-https://github.com/Sandraolis/deployment-project.git}
-
 read -p "Enter GitHub Personal Access Token (press Enter to skip if public): " -s GIT_TOKEN
 echo
-
 read -p "Enter branch name (press Enter to auto-detect): " BRANCH
 
-read -p "Enter remote SSH username: " SSH_USER
-read -p "Enter remote host IP or DNS: " SSH_HOST
-# read -p "Enter SSH port (default: 22): " SSH_PORT
-#SSH_PORT=${SSH_PORT:-22}
-SSH_PORT="22"
+read -p "Enter SSH username: " SSH_USER
+read -p "Enter server IP address: " SSH_HOST
+read -p "Enter SSH port (default: 22): " SSH_PORT
+SSH_PORT=${SSH_PORT:-22}
+read -p "Enter SSH key path: " SSH_KEY
+SSH_KEY=$(eval echo "$SSH_KEY") # Expand ~
 
 # Inject token if provided
 if [ -n "$GIT_TOKEN" ]; then
@@ -37,17 +35,17 @@ echo "[INFO] Target Server: $SSH_USER@$SSH_HOST:$SSH_PORT"
 
 # === 2. Validate SSH Connectivity ===
 echo "[INFO] Checking SSH connectivity..."
-if ssh -i ~/Desktop/hng/hng-stage1-deploy/hng-kp.pem \
+if ssh -i "$SSH_KEY" \
+       -o StrictHostKeyChecking=no \
        -o BatchMode=yes \
        -o ConnectTimeout=10 \
-       -o StrictHostKeyChecking=no \
-       -p 22 ubuntu@54.82.30.68 "echo connected" >/dev/null 2>&1; then
+       -p "$SSH_PORT" \
+       "$SSH_USER@$SSH_HOST" "echo connected" >/dev/null 2>&1; then
     echo "[INFO] SSH connection successful!"
 else
     echo "[ERROR] SSH connection failed. Exiting."
     exit 1
 fi
-
 
 # === 3. Clone or Update Repo Locally ===
 REPO_NAME=$(basename -s .git "$GIT_URL")
@@ -74,11 +72,12 @@ fi
 
 # === 4. Transfer Files to Remote Server ===
 echo "[INFO] Copying files to remote server..."
-scp -P "$SSH_PORT" -r "$REPO_NAME" "$SSH_USER@$SSH_HOST:~/"
+
+scp -i "$SSH_KEY" -P "$SSH_PORT" -r "$REPO_NAME" "$SSH_USER@$SSH_HOST:~/"
 
 # === 5. Server Preparation ===
 echo "[INFO] Preparing remote server (Docker + Nginx)..."
-ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash <<'EOF'
+ssh -i "$SSH_KEY" -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash <<'EOF'
 set -e
 echo "[REMOTE] Updating packages..."
 sudo apt-get update -y
@@ -96,7 +95,7 @@ EOF
 
 # === 6. Docker Deployment (Idempotent) ===
 echo "[INFO] Deploying Docker container..."
-ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash <<EOF
+ssh -i "$SSH_KEY" -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash <<'EOF'
 set -e
 cd ~/$REPO_NAME
 
@@ -115,7 +114,7 @@ EOF
 
 # === 7. Configure Nginx Reverse Proxy ===
 echo "[INFO] Configuring Nginx reverse proxy..."
-ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash <<'EOF'
+ssh -i "$SSH_KEY" -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash <<'EOF'
 set -e
 sudo bash -c 'cat > /etc/nginx/sites-available/default <<NGINXCONF
 server {
@@ -123,9 +122,9 @@ server {
     server_name _;
     location / {
         proxy_pass http://localhost:8080;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     }
 }
 NGINXCONF'
@@ -136,7 +135,7 @@ EOF
 
 # === 8. Deployment Validation ===
 echo "[INFO] Running deployment validation..."
-ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash <<'EOF'
+ssh -i "$SSH_KEY" -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash <<'EOF'
 set -e
 echo "[REMOTE] Checking Docker container..."
 sudo docker ps | grep myapp && echo "[REMOTE] Docker container running."
@@ -150,7 +149,7 @@ EOF
 
 # === 9. Cleanup ===
 echo "[INFO] Cleaning up Docker unused resources..."
-ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "sudo docker system prune -f >/dev/null 2>&1 || true"
+ssh -i "$SSH_KEY" -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "sudo docker system prune -f >/dev/null 2>&1 || true"
 
 echo "[SUCCESS] Deployment completed successfully!"
 echo "[INFO] Log file: $LOG_FILE"
