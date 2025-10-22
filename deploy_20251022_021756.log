@@ -1,0 +1,61 @@
+[0;32m=== DEPLOYMENT STARTED ===[0m
+Enter GitHub repository URL: Enter Personal Access Token: Enter Branch name: Enter SSH username: Enter Server IP address: Enter SSH port [default 22]: Enter SSH key path: [1;33m[INFO] Repository exists. Pulling latest changes...[0m
+From https://github.com/eyibiogeorge/hng-stage1-deploy
+ * branch            main       -> FETCH_HEAD
+Already up to date.
+[1;33m[INFO] Testing SSH connectivity...[0m
+[0;32m[INFO] SSH connection successful![0m
+[1;33m[INFO] Copying files to remote server (excluding .git)...[0m
+[REMOTE] Extracting project files...
+[1;33m[INFO] Building Docker image and starting container...[0m
+[REMOTE] Building Docker image...
+DEPRECATED: The legacy builder is deprecated and will be removed in a future release.
+            Install the buildx component to build images with BuildKit:
+            https://docs.docker.com/go/buildx/
+
+Sending build context to Docker daemon  15.36kB
+Step 1/6 : FROM nginx:1.25-alpine
+ ---> 501d84f5d064
+Step 2/6 : WORKDIR /usr/share/nginx/html
+ ---> Using cache
+ ---> 3548710027a8
+Step 3/6 : RUN rm -rf ./*
+ ---> Using cache
+ ---> 4388c988f870
+Step 4/6 : COPY . .
+ ---> Using cache
+ ---> 77ad3f62c52b
+Step 5/6 : EXPOSE 80
+ ---> Using cache
+ ---> 150447e61623
+Step 6/6 : CMD ["nginx", "-g", "daemon off;"]
+ ---> Using cache
+ ---> eddb4f8459b4
+Successfully built eddb4f8459b4
+Successfully tagged myapp:latest
+[REMOTE] Stopping old container...
+[REMOTE] Starting new container on port 8080...
+dfcdb99b9e5557034aea7f90f8ee60e3943c1e64e23afba07f6f8a8535f02622
+[REMOTE] Checking running containers...
+CONTAINER ID   IMAGE     COMMAND                  CREATED                  STATUS                  PORTS                                     NAMES
+dfcdb99b9e55   myapp     "/docker-entrypoint.…"   Less than a second ago   Up Less than a second   0.0.0.0:8080->80/tcp, [::]:8080->80/tcp   myapp
+[1;33m[INFO] Configuring Nginx reverse proxy...[0m
+[REMOTE] Updating Nginx config...
+[WARN] No permission to modify Nginx config; skipping reload.
+[1;33m[INFO] Checking app response...[0m
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0  0HTTP/1.1 200 OK
+Server: nginx/1.25.5
+Date: Wed, 22 Oct 2025 01:20:20 GMT
+Content-Type: text/html
+Content-Length: 979
+Last-Modified: Wed, 22 Oct 2025 00:48:29 GMT
+Connection: keep-alive
+ETag: "68f829dd-3d3"
+Accept-Ranges: bytes
+
+   979    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+[0;32m=== DEPLOYMENT COMPLETE ===[0m
+Check your app at: http://54.82.30.68
+Logs saved to: deploy_20251022_021756.log
