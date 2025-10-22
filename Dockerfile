@@ -1,21 +1,21 @@
-# ===============================
-# Simple Nginx Static Site Dockerfile
-# ===============================
-
-# Use a lightweight, stable Nginx version instead of :latest for predictability
+# Use a lightweight, stable Nginx base image
 FROM nginx:1.25-alpine
 
-# Set working directory for clarity (optional but clean)
+# Set working directory for static files
 WORKDIR /usr/share/nginx/html
 
-# Remove default nginx page
+# Remove default Nginx static files
 RUN rm -rf ./*
 
-# Copy your static files (HTML, CSS, JS, etc.) into container
+# Copy static files (HTML, CSS, JS, etc.) from the repository
 COPY . .
 
-# Expose port 80 for HTTP
+# Expose port 80 for HTTP traffic
 EXPOSE 80
+
+# Add a health check to verify Nginx is running
+HEALTHCHECK --interval=30s --timeout=3s \
+  CMD curl -f http://localhost/ || exit 1
 
 # Start Nginx in the foreground
 CMD ["nginx", "-g", "daemon off;"]

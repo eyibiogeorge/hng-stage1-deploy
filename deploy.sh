@@ -1,216 +1,136 @@
 #!/bin/bash
 
-# Set strict mode
 set -euo pipefail
 
-# Initialize logging
 LOG_FILE="deploy_$(date +%Y%m%d_%H%M%S).log"
-exec 1> >(tee -a "$LOG_FILE")
-exec 2>&1
+exec > >(tee -a "$LOG_FILE") 2>&1
 
-# Trap errors and cleanup
-cleanup() {
-    echo "ERROR: Script failed at line $1 with status $2" >&2
+trap 'echo "Error occurred at line $LINENO. Exiting."; exit 99' ERR
+
+function log() {
+    echo "[INFO] $1"
+}
+
+function error_exit() {
+    echo "[ERROR] $1"
     exit "$2"
 }
-trap 'cleanup $LINENO $?' ERR
 
-# Default values
-DEFAULT_BRANCH="main"
-CLEANUP_MODE=false
+# 1. Collect Parameters
+read -rp "Git Repository URL: " REPO_URL
+[[ -z "$REPO_URL" ]] && error_exit "Repository URL is required." 1
 
-# Parse optional cleanup flag
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --cleanup)
-            CLEANUP_MODE=true
-            shift
-            ;;
-        *)
-            echo "Unknown option: $1"
-            exit 1
-            ;;
-    esac
-done
+read -rp "Personal Access Token (PAT): " PAT
+[[ -z "$PAT" ]] && error_exit "PAT is required." 2
 
-# 1. Collect and validate parameters
-prompt_input() {
-    read -p "$1: " input
-    echo "$input"
-}
+read -rp "Branch name [default: main]: " BRANCH
+BRANCH=${BRANCH:-main}
 
-echo "Collecting deployment parameters..."
-REPO_URL=$(prompt_input "Enter Git Repository URL (https://...)")
-PAT=$(prompt_input "Enter Personal Access Token")
-BRANCH=$(prompt_input "Enter branch name (default: $DEFAULT_BRANCH)")
-BRANCH=${BRANCH:-$DEFAULT_BRANCH}
-SSH_USER=$(prompt_input "Enter SSH username")
-SSH_IP=$(prompt_input "Enter server IP address")
-SSH_KEY=$(prompt_input "Enter SSH key path")
-APP_PORT=$(prompt_input "Enter application port")
+read -rp "Remote SSH Username: " SSH_USER
+[[ -z "$SSH_USER" ]] && error_exit "SSH username is required." 3
 
-# Validate inputs
-[[ -z "$REPO_URL" || ! "$REPO_URL" =~ ^https:// ]] && { echo "Invalid Git URL"; exit 1; }
-[[ -z "$PAT" ]] && { echo "PAT cannot be empty"; exit 1; }
-[[ -z "$BRANCH" ]] && { echo "Branch name cannot be empty"; exit 1; }
-[[ -z "$SSH_USER" ]] && { echo "SSH username cannot be empty"; exit 1; }
-[[ -z "$SSH_IP" ]] && { echo "Server IP cannot be empty"; exit 1; }
-[[ ! -f "$SSH_KEY" ]] && { echo "SSH key file not found"; exit 1; }
-[[ -z "$APP_PORT" || ! "$APP_PORT" =~ ^[0-9]+$ ]] && { echo "Invalid port"; exit 1; }
+read -rp "Remote Server IP: " SERVER_IP
+[[ -z "$SERVER_IP" ]] && error_exit "Server IP is required." 4
 
-echo "Parameters validated successfully" >&2
+read -rp "SSH Key Path: " SSH_KEY
+[[ ! -f "$SSH_KEY" ]] && error_exit "SSH key not found at $SSH_KEY." 5
 
-# 2. Clone or update repository
+read -rp "Application internal port (e.g., 3000): " APP_PORT
+[[ -z "$APP_PORT" ]] && error_exit "Application port is required." 6
+
+# 2. Clone or Pull Repository
 REPO_NAME=$(basename "$REPO_URL" .git)
 if [[ -d "$REPO_NAME" ]]; then
-    echo "Repository exists, pulling latest changes..."
-    cd "$REPO_NAME"
-    git fetch origin
-    echo "DEBUG: Checking out and pulling branch '$BRANCH'" >&2
-    git checkout "$BRANCH"
-    git pull origin "$BRANCH" --no-rebase
+    log "Repository exists. Pulling latest changes..."
+    cd "$REPO_NAME" || error_exit "Failed to enter repo directory." 7
+    git pull origin "$BRANCH"
 else
-    echo "Cloning repository..."
-    git clone -b "$BRANCH" "https://${PAT}@${REPO_URL#https://}" "$REPO_NAME"
-    cd "$REPO_NAME"
+    log "Cloning repository..."
+    git clone "https://${PAT}@${REPO_URL#https://}" || error_exit "Git clone failed." 8
+    cd "$REPO_NAME" || error_exit "Failed to enter repo directory." 9
 fi
 
-# 3. Verify Dockerfile or docker-compose.yml
-if [[ ! -f "Dockerfile" && ! -f "docker-compose.yml" ]]; then
-    echo "ERROR: No Dockerfile or docker-compose.yml found"
-    exit 1
-fi
-echo "Project files verified" >&2
+git checkout "$BRANCH" || error_exit "Failed to switch to branch $BRANCH." 10
 
-# 4. SSH connectivity check
-echo "Testing SSH connection..."
-if ! ssh -i "$SSH_KEY" -o ConnectTimeout=10 "$SSH_USER@$SSH_IP" "echo 'SSH connection successful'"; then
-    echo "ERROR: SSH connection failed"
-    exit 1
-fi
+# 3. Verify Docker setup
+[[ -f "Dockerfile" || -f "docker-compose.yml" ]] || error_exit "No Dockerfile or docker-compose.yml found." 11
+log "Docker configuration found."
 
-# 5. Prepare remote environment
-echo "Preparing remote environment..."
-ssh -i "$SSH_KEY" "$SSH_USER@$SSH_IP" /bin/bash << 'EOF'
-    set -e
-    echo "Updating system packages..."
-    sudo apt-get update -y && sudo apt-get upgrade -y
-    echo "Installing Docker..."
-    if ! command -v docker &> /dev/null; then
-        sudo apt-get install -y docker.io
-        sudo systemctl enable docker
-        sudo systemctl start docker
-    fi
-    echo "Installing Docker Compose..."
-    if ! command -v docker-compose &> /dev/null; then
-        sudo apt-get install -y docker-compose
-    fi
-    echo "Installing Nginx..."
-    if ! command -v nginx &> /dev/null; then
-        sudo apt-get install -y nginx
-    fi
-    echo "Adding user to Docker group..."
-    sudo usermod -aG docker "$USER"
-    echo "Docker version: $(docker --version)"
-    echo "Docker Compose version: $(docker-compose --version)"
-    echo "Nginx version: $(nginx -v 2>&1)"
+# 4. SSH Connectivity Check
+log "Checking SSH connectivity..."
+ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=5 "$SSH_USER@$SERVER_IP" "echo SSH connection successful" || error_exit "SSH connection failed." 12
+
+# 5. Prepare Remote Environment
+log "Preparing remote environment..."
+ssh -i "$SSH_KEY" "$SSH_USER@$SERVER_IP" bash <<EOF
+set -e
+sudo apt update
+sudo apt install -y docker.io docker-compose nginx curl
+sudo usermod -aG docker \$USER
+sudo systemctl enable docker nginx
+sudo systemctl start docker nginx
+docker --version
+nginx -v
 EOF
 
-# 6. Deploy application
-echo "Transferring project files..."
-# Ensure remote directory exists
-ssh -i "$SSH_KEY" "$SSH_USER@$SSH_IP" "mkdir -p /home/$SSH_USER/$REPO_NAME"
-# Use scp to transfer files recursively
-scp -i "$SSH_KEY" -r ./* "$SSH_USER@$SSH_IP:/home/$SSH_USER/$REPO_NAME/"
+# 6. Deploy Dockerized Application
+log "Creating remote project directory..."
+ssh -i "$SSH_KEY" "$SSH_USER@$SERVER_IP" "mkdir -p ~/deploy_temp/$REPO_NAME"
 
-echo "Deploying application..."
-ssh -i "$SSH_KEY" "$SSH_USER@$SSH_IP" /bin/bash << EOF
-    set -e
-    cd "/home/$SSH_USER/$REPO_NAME"
-    if [[ -f "docker-compose.yml" ]]; then
-        echo "Running docker-compose..."
-        docker-compose down 2>/dev/null || true
-        docker-compose up -d --build
-    else
-        echo "Building and running Docker container..."
-        docker stop "$REPO_NAME" 2>/dev/null || true
-        docker rm "$REPO_NAME" 2>/dev/null || true
-        docker build -t "$REPO_NAME" .
-        docker run -d --name "$REPO_NAME" -p "$APP_PORT:$APP_PORT" "$REPO_NAME"
-    fi
-    echo "Checking container health..."
-    sleep 5
-    if ! docker ps | grep "$REPO_NAME"; then
-        echo "ERROR: Container failed to start"
-        docker logs "$REPO_NAME"
-        exit 1
-    fi
+log "Transferring project files using scp..."
+scp -i "$SSH_KEY" -r . "$SSH_USER@$SERVER_IP:~/deploy_temp/$REPO_NAME"
+
+log "Deploying containers..."
+ssh -i "$SSH_KEY" "$SSH_USER@$SERVER_IP" bash <<EOF
+cd ~/deploy_temp/$REPO_NAME
+docker-compose down || true
+docker-compose up -d --build
+sleep 5
+docker ps
 EOF
 
 # 7. Configure Nginx
-echo "Configuring Nginx..."
-ssh -i "$SSH_KEY" "$SSH_USER@$SSH_IP" /bin/bash << 'NGINX_CONF'
-    set -e
-    cat << EOF | sudo tee /etc/nginx/sites-available/$REPO_NAME
+NGINX_CONF="/etc/nginx/sites-available/$REPO_NAME"
+log "Configuring Nginx reverse proxy..."
+ssh -i "$SSH_KEY" "$SSH_USER@$SERVER_IP" bash <<EOF
+sudo bash -c 'cat > $NGINX_CONF' <<NGINX
 server {
     listen 80;
-    server_name $SSH_IP;
+    server_name _;
     location / {
         proxy_pass http://localhost:$APP_PORT;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
     }
 }
+NGINX
+sudo ln -sf $NGINX_CONF /etc/nginx/sites-enabled/
+sudo nginx -t
+sudo systemctl reload nginx
 EOF
-    sudo ln -sf /etc/nginx/sites-available/$REPO_NAME /etc/nginx/sites-enabled/
-    sudo nginx -t
+
+# 8. Validate Deployment
+log "Validating deployment..."
+ssh -i "$SSH_KEY" "$SSH_USER@$SERVER_IP" bash <<EOF
+docker ps | grep $REPO_NAME || exit 13
+curl -s http://localhost:$APP_PORT || exit 14
+curl -s http://localhost || exit 15
+EOF
+
+log "Deployment successful and validated."
+
+# 9. Cleanup Option
+if [[ "${1:-}" == "--cleanup" ]]; then
+    log "Cleaning up remote resources..."
+    ssh -i "$SSH_KEY" "$SSH_USER@$SERVER_IP" bash <<EOF
+    cd ~/deploy_temp/$REPO_NAME
+    docker-compose down
+    sudo rm -rf ~/deploy_temp/$REPO_NAME
+    sudo rm -f /etc/nginx/sites-enabled/$REPO_NAME
+    sudo rm -f /etc/nginx/sites-available/$REPO_NAME
     sudo systemctl reload nginx
-NGINX_CONF
-
-# 8. Validate deployment
-echo "Validating deployment..."
-ssh -i "$SSH_KEY" "$SSH_USER@$SSH_IP" /bin/bash << 'EOF'
-    set -e
-    if ! systemctl is-active --quiet docker; then
-        echo "ERROR: Docker service is not running"
-        exit 1
-    fi
-    if ! docker ps | grep "$REPO_NAME"; then
-        echo "ERROR: Application container is not running"
-        exit 1
-    fi
-    if ! systemctl is-active --quiet nginx; then
-        echo "ERROR: Nginx service is not running"
-        exit 1
-    fi
-    if ! curl -s -o /dev/null -w "%{http_code}" "http://localhost" | grep -q 200; then
-        echo "ERROR: Application is not accessible"
-        exit 1
-    fi
-    echo "Deployment validated successfully"
 EOF
-
-# 9. Cleanup (optional)
-if [[ "$CLEANUP_MODE" == true ]]; then
-    echo "Running cleanup..."
-    ssh -i "$SSH_KEY" "$SSH_USER@$SSH_IP" /bin/bash << EOF
-        set -e
-        cd "/home/$SSH_USER/$REPO_NAME"
-        if [[ -f "docker-compose.yml" ]]; then
-            docker-compose down
-        else
-            docker stop "$REPO_NAME" 2>/dev/null || true
-            docker rm "$REPO_NAME" 2>/dev/null || true
-        fi
-        sudo rm -f /etc/nginx/sites-available/$REPO_NAME
-        sudo rm -f /etc/nginx/sites-enabled/$REPO_NAME
-        sudo systemctl reload nginx
-        rm -rf "/home/$SSH_USER/$REPO_NAME"
-EOF
-    rm -rf "$REPO_NAME"
-    echo "Cleanup completed"
+    log "Cleanup completed."
 fi
 
-echo "Deployment completed successfully. Logs saved to $LOG_FILE"
+exit 0
