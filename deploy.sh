@@ -5,7 +5,7 @@ set -euo pipefail
 LOG_FILE="deploy_$(date +%Y%m%d_%H%M%S).log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-trap 'echo "Error occurred at line $LINENO. Exiting."; exit 99' ERR
+trap 'echo "[ERROR] Unexpected error at line $LINENO. Exiting."; exit 99' ERR
 
 function log() {
     echo "[INFO] $1"
@@ -56,9 +56,12 @@ git checkout "$BRANCH" || error_exit "Failed to switch to branch $BRANCH." 10
 [[ -f "Dockerfile" || -f "docker-compose.yml" ]] || error_exit "No Dockerfile or docker-compose.yml found." 11
 log "Docker configuration found."
 
-# 4. SSH Connectivity Check
+# 4. SSH Connectivity Check with Host Key Scan
+log "Scanning and adding SSH host key..."
+ssh-keyscan -H "$SERVER_IP" >> ~/.ssh/known_hosts || error_exit "Failed to scan SSH host key." 12
+
 log "Checking SSH connectivity..."
-ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=5 "$SSH_USER@$SERVER_IP" "echo SSH connection successful" || error_exit "SSH connection failed." 12
+ssh -i "$SSH_KEY" -o BatchMode=yes "$SSH_USER@$SERVER_IP" "echo SSH connection successful" || error_exit "SSH connection failed." 13
 
 # 5. Prepare Remote Environment
 log "Preparing remote environment..."
@@ -75,10 +78,10 @@ EOF
 
 # 6. Deploy Dockerized Application
 log "Creating remote project directory..."
-ssh -i "$SSH_KEY" "$SSH_USER@$SERVER_IP" "mkdir -p ~/deploy_temp/$REPO_NAME"
 
+ssh -i "$SSH_KEY" "$SSH_USER@$SERVER_IP" "mkdir -p ~/deploy_temp/$REPO_NAME"
 log "Transferring project files using scp..."
-scp -i "$SSH_KEY" -r . "$SSH_USER@$SERVER_IP:~/deploy_temp/$REPO_NAME"
+scp -i "$SSH_KEY" -r $(ls -A | grep -v '^\.git$') "$SSH_USER@$SERVER_IP:~/deploy_temp/$REPO_NAME"
 
 log "Deploying containers..."
 ssh -i "$SSH_KEY" "$SSH_USER@$SERVER_IP" bash <<EOF
@@ -93,7 +96,7 @@ EOF
 NGINX_CONF="/etc/nginx/sites-available/$REPO_NAME"
 log "Configuring Nginx reverse proxy..."
 ssh -i "$SSH_KEY" "$SSH_USER@$SERVER_IP" bash <<EOF
-sudo bash -c 'cat > $NGINX_CONF' <<NGINX
+cat <<'NGINX' | sudo tee /etc/nginx/sites-available/$REPO_NAME > /dev/null
 server {
     listen 80;
     server_name _;
@@ -101,10 +104,12 @@ server {
         proxy_pass http://localhost:$APP_PORT;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
     }
 }
 NGINX
-sudo ln -sf $NGINX_CONF /etc/nginx/sites-enabled/
+sudo ln -sf /etc/nginx/sites-available/$REPO_NAME /etc/nginx/sites-enabled/$REPO_NAME
 sudo nginx -t
 sudo systemctl reload nginx
 EOF
@@ -112,9 +117,14 @@ EOF
 # 8. Validate Deployment
 log "Validating deployment..."
 ssh -i "$SSH_KEY" "$SSH_USER@$SERVER_IP" bash <<EOF
-docker ps | grep $REPO_NAME || exit 13
-curl -s http://localhost:$APP_PORT || exit 14
-curl -s http://localhost || exit 15
+echo "[INFO] Checking running containers..."
+docker ps
+
+echo "[INFO] Testing app port..."
+curl -s -o /dev/null -w "%{http_code}" http://localhost:$APP_PORT || exit 15
+
+echo "[INFO] Testing Nginx proxy..."
+curl -s -o /dev/null -w "%{http_code}" http://localhost || exit 16
 EOF
 
 log "Deployment successful and validated."
