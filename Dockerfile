@@ -11,7 +11,7 @@ RUN rm -rf ./*
 COPY . .
 
 # Expose port 80 for HTTP traffic
-EXPOSE 80
+EXPOSE 3000
 
 # Add a health check to verify Nginx is running
 HEALTHCHECK --interval=30s --timeout=3s \

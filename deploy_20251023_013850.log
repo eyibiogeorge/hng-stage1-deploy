@@ -1,0 +1,63 @@
+Git Repository URL: Personal Access Token (PAT): Branch name [default: main]: Remote SSH Username: Remote Server IP: SSH Key Path: Application internal port (e.g., 3000): [INFO] Repository exists. Pulling latest changes...
+From https://github.com/eyibiogeorge/hng-stage1-deploy
+ * branch            main       -> FETCH_HEAD
+   ae53196..a63c46a  main       -> origin/main
+Updating ae53196..a63c46a
+Fast-forward
+ deploy.sh          | 30 ++++++++++++++++++++----------
+ docker-compose.yml | 11 +++++++++++
+ hng-stage1-deploy  |  2 +-
+ 3 files changed, 32 insertions(+), 11 deletions(-)
+ create mode 100644 docker-compose.yml
+Your branch is up to date with 'origin/main'.
+Already on 'main'
+[INFO] Docker configuration found.
+[INFO] Scanning and adding SSH host key...
+[INFO] Checking SSH connectivity...
+SSH connection successful
+[INFO] Preparing remote environment...
+
+WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
+
+Hit:1 http://us-east-1.ec2.archive.ubuntu.com/ubuntu noble InRelease
+Hit:2 http://us-east-1.ec2.archive.ubuntu.com/ubuntu noble-updates InRelease
+Hit:3 http://us-east-1.ec2.archive.ubuntu.com/ubuntu noble-backports InRelease
+Hit:4 http://security.ubuntu.com/ubuntu noble-security InRelease
+Reading package lists...
+Building dependency tree...
+Reading state information...
+55 packages can be upgraded. Run 'apt list --upgradable' to see them.
+
+WARNING: apt Reading package lists...
+Building dependency tree...does not have a stable CLI interface. Use with caution in scripts.
+
+
+Reading state information...
+docker.io is already the newest version (28.2.2-0ubuntu1~24.04.1).
+docker-compose is already the newest version (1.29.2-6ubuntu1).
+nginx is already the newest version (1.24.0-2ubuntu7.5).
+curl is already the newest version (8.5.0-2ubuntu10.6).
+0 upgraded, 0 newly installed, 0 to remove and 55 not upgraded.
+Synchronizing state of nginx.service with SysV service script with /usr/lib/systemd/systemd-sysv-install.
+Executing: /usr/lib/systemd/systemd-sysv-install enable nginx
+Docker version 28.2.2, build 28.2.2-0ubuntu1~24.04.1
+nginx version: nginx/1.24.0 (Ubuntu)
+[INFO] Creating remote project directory...
+[INFO] Transferring project files using scp...
+[INFO] Deploying containers...
+The APP_PORT variable is not set. Defaulting to a blank string.
+The Compose file './docker-compose.yml' is invalid because:
+services.app.ports contains an invalid type, it should be a number, or an object
+The APP_PORT variable is not set. Defaulting to a blank string.
+The Compose file './docker-compose.yml' is invalid because:
+services.app.ports contains an invalid type, it should be a number, or an object
+CONTAINER ID   IMAGE     COMMAND   CREATED   STATUS    PORTS     NAMES
+[INFO] Configuring Nginx reverse proxy...
+2025/10/23 00:41:22 [warn] 8540#8540: conflicting server name "_" on 0.0.0.0:80, ignored
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+[INFO] Validating deployment...
+[INFO] Checking running containers...
+CONTAINER ID   IMAGE     COMMAND   CREATED   STATUS    PORTS     NAMES
+[INFO] Testing app port...
+000[ERROR] Unexpected error at line 119. Exiting.
